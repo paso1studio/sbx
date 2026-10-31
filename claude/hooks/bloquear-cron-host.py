@@ -80,7 +80,13 @@ def sin_heredocs(cmd):
 
 def segmentos(cmd):
     # Corta el comando en sus partes ejecutables: ; & | && || ( ) $( ` y saltos de línea.
-    for seg in re.split(r"\|\||&&|[;&|()`\n]|\$\(", sin_heredocs(cmd)):
+    # 2>&1, >&2 y &> son redirecciones, no separadores: se sacan antes de cortar.
+    limpio = re.sub(r"\d*>&\d*-?|&>>?", " ", sin_heredocs(cmd))
+    # El texto entre comillas no separa comandos ("(sin Apple)", 'a; b'). Las comillas
+    # dobles con $( ) o ` ` sí ejecutan algo, así que esas se dejan como están.
+    limpio = re.sub(r"'[^']*'", "''", limpio)
+    limpio = re.sub(r'"[^"$`]*"', '""', limpio)
+    for seg in re.split(r"\|\||&&|[;&|()`\n]|\$\(", limpio):
         palabras = seg.split()
         prefijado = False
         while palabras and (palabras[0] in PREFIJOS or re.match(r"^\w+=", palabras[0])):
@@ -90,13 +96,17 @@ def segmentos(cmd):
             yield prefijado, [os.path.basename(palabras[0])] + palabras[1:]
 
 
+# Formas exactas que solo muestran lo programado.
+CRON_LECTURA = (["crontab", "-l"], ["atq"])
+
+
 def es_lectura(prefijado, p):
     # Con sudo, env o una variable delante (PAGER=, LESSOPEN=, GIT_*=) ya no es lectura.
     # Redirigir a un archivo sí se permite: escribir en las carpetas de cron lo frena
     # LAUNCHD_DIRS más abajo.
     if prefijado:
         return False
-    if p[0] in SOLO_LECTURA:
+    if p[0] in SOLO_LECTURA or p in CRON_LECTURA:
         return True
     if p[0] == "git":
         return len(p) > 1 and p[1] in GIT_LECTURA and not any(GIT_OPCIONES_EXEC.match(a) for a in p[1:])
@@ -114,14 +124,19 @@ def bloquea_bash(cmd):
     if PALABRAS_CRON.search(cmd) and not all(es_lectura(pre, p) for pre, p in partes):
         return True
     for _, p in partes:
-        if p[0] in {"crontab", "at", "batch", "atq", "atrm"}:
+        if p[0] in {"crontab", "at", "batch", "atq", "atrm"} and p not in CRON_LECTURA:
             return True
         if p[0] == "launchctl" and len(p) > 1 and p[1] in {"load", "bootstrap", "submit", "enable", "kickstart"}:
             return True
         if p[0] == "brew" and len(p) > 2 and p[1] == "services" and p[2] in {"start", "restart", "run"}:
             return True
-    # Escribir un plist o crontab a mano (cat >, tee, cp, mv, ln) también cuenta.
-    return bool(LAUNCHD_DIRS.search(cmd) and re.search(r">|\btee\b|\bcp\b|\bmv\b|\bln\b|\binstall\b", cmd))
+        # Copiar, mover o enlazar algo hacia una carpeta de cron o launchd.
+        if p[0] in {"cp", "mv", "ln", "install", "tee", "rsync", "ditto", "touch"} \
+                and any(LAUNCHD_DIRS.search(a) for a in p[1:]):
+            return True
+    # Redirigir la salida (>, >>) hacia una de esas carpetas.
+    destinos = re.findall(r">>?\s*['\"]?([^\s'\";&|]+)", re.sub(r"\d*>&\d*-?", " ", cmd))
+    return any(LAUNCHD_DIRS.search(d) for d in destinos)
 
 
 def main():
