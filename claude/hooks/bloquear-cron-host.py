@@ -26,8 +26,8 @@ PREFIJOS = {"sudo", "env", "command", "exec", "nohup", "time", "nice", "xargs"}
 # ni rg (--pre), ni editores.
 SOLO_LECTURA = {"cat", "head", "tail", "grep", "egrep", "fgrep", "ls", "echo", "printf",
                 "wc", "file", "stat", "diff", "jq", "which", "type", "cd", "pwd", "true", "sbx"}
-# git solo con subcomandos comunes y sin opciones que ejecuten algo.
-GIT_LECTURA = {"init", "status", "log", "diff", "show", "add", "commit", "push", "branch"}
+# git solo con subcomandos que no disparan hooks del repo (commit y push sí los disparan).
+GIT_LECTURA = {"init", "status", "log", "diff", "show", "branch"}
 GIT_OPCIONES_EXEC = re.compile(r"^(-c|--config-env|--exec-path|--ext-diff|--upload-pack|--receive-pack|-x|--exec)")
 LAUNCHCTL_LECTURA = {"list", "print", "print-disabled", "print-cache", "blame", "version", "help"}
 PALABRAS_CRON = re.compile(
@@ -65,7 +65,11 @@ def sin_heredocs(cmd):
             continue
         salida.append(linea)
         for m in re.finditer(r"(?<!<)<<-?\s*(['\"]?)(\w+)\1(?!\w)", linea):
-            if not entre_comillas(linea[:m.start()]):
+            antes = linea[:m.start()]
+            # Un # (comentario) o una \ antes del << vuelven ambigua la línea: no se saca nada.
+            if "#" in antes or "\\" in antes:
+                break
+            if not entre_comillas(antes):
                 fin = m.group(2)
                 break
     if fin is not None:  # no cerró: no era un heredoc de verdad
