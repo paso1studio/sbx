@@ -19,10 +19,13 @@ MOTIVO = (
 
 LAUNCHD_DIRS = re.compile(r"Library/Launch(Agents|Daemons)/|/etc/(crontab|periodic)|/usr/lib/cron|/var/at/")
 PREFIJOS = {"sudo", "env", "command", "exec", "nohup", "time", "nice", "xargs"}
-# Comandos que ejecutan código que este hook no puede leer bien (bash -c, | sh, eval,
-# python -c, heredoc a un shell...). Si aparecen junto a una palabra de cron, se bloquea.
-INTERPRETES = {"sh", "bash", "zsh", "dash", "ksh", "fish", "eval", "source", ".",
-               "python", "python3", "perl", "ruby", "node", "osascript", "expect"}
+# Si el comando menciona algo de cron, se bloquea salvo que cada parte sea de solo
+# lectura. Así cualquier envoltorio (bash -c, eval, python -c, awk, find -exec,
+# sudo -u ...) queda bloqueado sin tener que enumerarlos.
+SOLO_LECTURA = {"cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg",
+                "ls", "echo", "printf", "wc", "file", "stat", "diff", "jq", "man",
+                "which", "type", "whatis", "apropos", "cd", "pwd", "true", "sbx"}
+LAUNCHCTL_LECTURA = {"list", "print", "print-disabled", "print-cache", "blame", "version", "help"}
 PALABRAS_CRON = re.compile(
     r"(?<![\w./-])crontab\b|\blaunchctl\b|Launch(Agents|Daemons)|\bbrew\s+services\b"
     r"|(?<![\w./-])(atq|atrm)\b|(?<![\w./-])at\s+(-\w+\s+)*(now|noon|midnight|teatime|\d)"
@@ -54,10 +57,23 @@ def segmentos(cmd):
             yield [os.path.basename(palabras[0])] + palabras[1:]
 
 
+def es_lectura(p):
+    if p[0] in SOLO_LECTURA:
+        return True
+    if p[0] == "git":
+        return "-c" not in p  # git -c alias.x='!crontab' ejecuta comandos
+    if p[0] == "launchctl":
+        return len(p) > 1 and p[1] in LAUNCHCTL_LECTURA
+    if p[0] == "brew":
+        return p[1:3] in (["services", "list"], ["services", "info"])
+    return False
+
+
 def bloquea_bash(cmd):
     partes = list(segmentos(cmd))
-    if any(p[0] in INTERPRETES or re.match(r"^python3?(\.\d+)?$", p[0]) for p in partes) \
-            and PALABRAS_CRON.search(cmd):
+    # Se busca en todo el comando, cuerpo de heredocs incluido: si se lo pasan a un
+    # shell (bash <<EOF), ese shell no es de solo lectura y se bloquea.
+    if PALABRAS_CRON.search(cmd) and not all(es_lectura(p) for p in partes):
         return True
     for p in partes:
         if p[0] in {"crontab", "at", "batch", "atq", "atrm"}:
