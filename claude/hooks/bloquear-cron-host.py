@@ -22,9 +22,13 @@ PREFIJOS = {"sudo", "env", "command", "exec", "nohup", "time", "nice", "xargs"}
 # Si el comando menciona algo de cron, se bloquea salvo que cada parte sea de solo
 # lectura. Así cualquier envoltorio (bash -c, eval, python -c, awk, find -exec,
 # sudo -u ...) queda bloqueado sin tener que enumerarlos.
-SOLO_LECTURA = {"cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg",
-                "ls", "echo", "printf", "wc", "file", "stat", "diff", "jq", "man",
-                "which", "type", "whatis", "apropos", "cd", "pwd", "true", "sbx"}
+# Solo comandos que no pueden lanzar otro programa: nada de paginadores (less, man),
+# ni rg (--pre), ni editores.
+SOLO_LECTURA = {"cat", "head", "tail", "grep", "egrep", "fgrep", "ls", "echo", "printf",
+                "wc", "file", "stat", "diff", "jq", "which", "type", "cd", "pwd", "true", "sbx"}
+# git solo con subcomandos comunes y sin opciones que ejecuten algo.
+GIT_LECTURA = {"init", "status", "log", "diff", "show", "add", "commit", "push", "branch"}
+GIT_OPCIONES_EXEC = re.compile(r"^(-c|--config-env|--exec-path|--ext-diff|--upload-pack|--receive-pack|-x|--exec)")
 LAUNCHCTL_LECTURA = {"list", "print", "print-disabled", "print-cache", "blame", "version", "help"}
 PALABRAS_CRON = re.compile(
     r"(?<![\w./-])crontab\b|\blaunchctl\b|Launch(Agents|Daemons)|\bbrew\s+services\b"
@@ -32,18 +36,40 @@ PALABRAS_CRON = re.compile(
 )
 
 
+def entre_comillas(texto):
+    # True si al final de `texto` quedó abierta una comilla simple o doble.
+    simple = doble = False
+    escapado = False
+    for c in texto:
+        if escapado:
+            escapado = False
+        elif c == "\\" and not simple:
+            escapado = True
+        elif c == "'" and not doble:
+            simple = not simple
+        elif c == '"' and not simple:
+            doble = not doble
+    return simple or doble
+
+
 def sin_heredocs(cmd):
     # El cuerpo de un heredoc es texto (un README, un script), no comandos a ejecutar.
-    lineas, salida, fin = cmd.split("\n"), [], None
+    # Ante la duda no se saca nada: un `<<` entre comillas, un `<<<` o un heredoc que
+    # nunca cierra dejan el comando entero para que se revise línea por línea.
+    lineas, salida, fin, cuerpo = cmd.split("\n"), [], None, []
     for linea in lineas:
         if fin is not None:
+            cuerpo.append(linea)
             if linea.strip() == fin:
-                fin = None
+                fin, cuerpo = None, []
             continue
         salida.append(linea)
-        m = re.search(r"<<-?\s*['\"]?(\w+)['\"]?", linea)
-        if m:
-            fin = m.group(1)
+        for m in re.finditer(r"(?<!<)<<-?\s*(['\"]?)(\w+)\1(?!\w)", linea):
+            if not entre_comillas(linea[:m.start()]):
+                fin = m.group(2)
+                break
+    if fin is not None:  # no cerró: no era un heredoc de verdad
+        salida.extend(cuerpo)
     return "\n".join(salida)
 
 
@@ -51,17 +77,24 @@ def segmentos(cmd):
     # Corta el comando en sus partes ejecutables: ; & | && || ( ) $( ` y saltos de línea.
     for seg in re.split(r"\|\||&&|[;&|()`\n]|\$\(", sin_heredocs(cmd)):
         palabras = seg.split()
+        prefijado = False
         while palabras and (palabras[0] in PREFIJOS or re.match(r"^\w+=", palabras[0])):
             palabras.pop(0)
+            prefijado = True
         if palabras:
-            yield [os.path.basename(palabras[0])] + palabras[1:]
+            yield prefijado, [os.path.basename(palabras[0])] + palabras[1:]
 
 
-def es_lectura(p):
+def es_lectura(prefijado, p):
+    # Con sudo, env o una variable delante (PAGER=, LESSOPEN=, GIT_*=) ya no es lectura.
+    # Redirigir a un archivo sí se permite: escribir en las carpetas de cron lo frena
+    # LAUNCHD_DIRS más abajo.
+    if prefijado:
+        return False
     if p[0] in SOLO_LECTURA:
         return True
     if p[0] == "git":
-        return "-c" not in p  # git -c alias.x='!crontab' ejecuta comandos
+        return len(p) > 1 and p[1] in GIT_LECTURA and not any(GIT_OPCIONES_EXEC.match(a) for a in p[1:])
     if p[0] == "launchctl":
         return len(p) > 1 and p[1] in LAUNCHCTL_LECTURA
     if p[0] == "brew":
@@ -73,9 +106,9 @@ def bloquea_bash(cmd):
     partes = list(segmentos(cmd))
     # Se busca en todo el comando, cuerpo de heredocs incluido: si se lo pasan a un
     # shell (bash <<EOF), ese shell no es de solo lectura y se bloquea.
-    if PALABRAS_CRON.search(cmd) and not all(es_lectura(p) for p in partes):
+    if PALABRAS_CRON.search(cmd) and not all(es_lectura(pre, p) for pre, p in partes):
         return True
-    for p in partes:
+    for _, p in partes:
         if p[0] in {"crontab", "at", "batch", "atq", "atrm"}:
             return True
         if p[0] == "launchctl" and len(p) > 1 and p[1] in {"load", "bootstrap", "submit", "enable", "kickstart"}:
