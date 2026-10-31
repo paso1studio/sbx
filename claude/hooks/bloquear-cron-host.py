@@ -66,8 +66,9 @@ def sin_heredocs(cmd):
         salida.append(linea)
         for m in re.finditer(r"(?<!<)<<-?\s*(['\"]?)(\w+)\1(?!\w)", linea):
             antes = linea[:m.start()]
-            # Un # (comentario) o una \ antes del << vuelven ambigua la línea: no se saca nada.
-            if "#" in antes or "\\" in antes:
+            # Solo se confía en líneas simples (palabras, rutas, redirecciones). Cualquier
+            # otra cosa (#, \, $(( )), ${ }, ...) la vuelve ambigua: no se saca nada.
+            if not re.fullmatch(r"[\w\s./~:=>'\"-]*", antes):
                 break
             if not entre_comillas(antes):
                 fin = m.group(2)
