@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# sbx: un contenedor Docker por proyecto para los cron y scripts, así la Mac queda limpia.
+# La plantilla vive en el repo macbook (este archivo está en <repo>/bin/sbx).
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+BASE_DIR="$REPO/sandbox/base"
+TEMPLATE_DIR="$REPO/sandbox/template"
+
+die() { echo "sbx: $*" >&2; exit 1; }
+
+usage() {
+  cat <<'USO'
+uso: sbx <comando>
+
+  init [alpine|ubuntu]           crea .sandbox/ en el proyecto actual
+  up | down | restart            levanta, baja o reinicia el contenedor
+  sh                             abre una shell dentro del contenedor
+  run <nombre> <comando...>      corre un job una vez ahora (igual que el cron)
+  logs [-f]                      salida de supercronic
+  ps                             todos los sandbox de la Mac
+
+  cron ls                        lista los cron del proyecto
+  cron add "<expr>" <nombre> <comando...>
+  cron rm <nombre>
+  cron reload
+
+  inbox [--all|--peek|--follow]  resultados de los jobs que terminaron
+  base build [alpine|ubuntu|all] reconstruye la imagen base
+USO
+}
+
+# Sube desde el directorio actual hasta encontrar .sandbox/compose.yaml.
+project_root() {
+  local d="$PWD"
+  while [ "$d" != "/" ]; do
+    [ -f "$d/.sandbox/compose.yaml" ] && { echo "$d"; return; }
+    d="$(dirname "$d")"
+  done
+  die "no hay .sandbox/ en este proyecto (usá: sbx init)"
+}
+
+load_project() {
+  ROOT="$(project_root)"
+  SBX="$ROOT/.sandbox"
+  NAME="sbx-$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_\n-' '-')"
+}
+
+compose() { docker compose -p "$NAME" -f "$SBX/compose.yaml" "$@"; }
+
+base_os() { sed -n 's/^FROM sbx-base:\([a-z]*\).*/\1/p' "$SBX/Dockerfile" | head -1; }
+
+base_build() {
+  local os="$1" from
+  case "$os" in
+    alpine) from=alpine:3.22 ;;
+    ubuntu) from=ubuntu:24.04 ;;
+    *) die "sistema operativo no soportado: $os" ;;
+  esac
+  local tz; tz="$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')"
+  docker build -t "sbx-base:$os" --build-arg BASE="$from" --build-arg TZ="${tz:-UTC}" "$BASE_DIR"
+}
+
+ensure_base() {
+  local os; os="$(base_os)"
+  [ -n "$os" ] || return 0
+  docker image inspect "sbx-base:$os" >/dev/null 2>&1 || base_build "$os"
+}
+
+cron_reload() {
+  if [ -n "$(compose ps -q sandbox 2>/dev/null)" ]; then
+    compose kill -s USR2 sandbox >/dev/null && echo "crontab recargado en $NAME"
+  else
+    echo "el contenedor está apagado; el crontab se lee al hacer: sbx up"
+  fi
+}
+
+cmd_init() {
+  local os="${1:-alpine}"
+  [ "$os" = alpine ] || [ "$os" = ubuntu ] || die "usá alpine o ubuntu"
+  [ -e .sandbox ] && die ".sandbox/ ya existe en $PWD"
+  cp -R "$TEMPLATE_DIR" .sandbox
+  sed -i '' "s/^FROM sbx-base:alpine/FROM sbx-base:$os/" .sandbox/Dockerfile
+  echo "creado .sandbox/ ($os). Siguiente paso: sbx up"
+}
+
+cmd_cron() {
+  load_project
+  local crontab="$SBX/crontab"
+  case "${1:-ls}" in
+    ls)
+      grep -vE '^\s*(#|$)' "$crontab" || echo "(sin cron)" ;;
+    add)
+      shift
+      [ $# -ge 3 ] || die 'uso: sbx cron add "<expr>" <nombre> <comando...>'
+      local expr="$1" name="$2"; shift 2
+      [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || die "nombre inválido: $name (letras, números, - y _)"
+      local fields; fields=$(wc -w <<<"$expr" | tr -d ' ')
+      [[ "$expr" == @* || "$fields" -eq 5 || "$fields" -eq 6 ]] || die "expresión de cron inválida: $expr"
+      grep -qE "sbx-run $name( |$)" "$crontab" && die "ya existe un cron llamado $name"
+      echo "$expr sbx-run $name $*" >> "$crontab"
+      echo "agregado: $expr sbx-run $name $*"
+      cron_reload ;;
+    rm)
+      [ -n "${2:-}" ] || die "uso: sbx cron rm <nombre>"
+      grep -qE "sbx-run $2( |$)" "$crontab" || die "no existe un cron llamado $2"
+      sed -i '' -E "/sbx-run $2( |$)/d" "$crontab"
+      echo "borrado: $2"
+      cron_reload ;;
+    reload) cron_reload ;;
+    *) die "subcomando de cron desconocido: $1" ;;
+  esac
+}
+
+# Muestra los eventos que dejó sbx-run. Por defecto solo los no leídos y los marca como leídos.
+cmd_inbox() {
+  load_project
+  local events="$SBX/out/events.jsonl" marker="$SBX/out/.inbox-leidos"
+  local fmt='"\(.ts)  \(.job)  exit=\(.exit)  \(.secs)s  \(.log)"'
+  [ -f "$events" ] || { echo "(sin eventos)"; return; }
+  case "${1:-}" in
+    --follow) exec tail -n0 -F "$events" | jq --unbuffered -r "$fmt" ;;
+    --all) jq -r "$fmt" "$events"; return ;;
+  esac
+  local total seen=0
+  total=$(wc -l < "$events" | tr -d ' ')
+  [ -f "$marker" ] && seen=$(cat "$marker")
+  [ "$seen" -le "$total" ] || seen=0
+  if [ "$total" -eq "$seen" ]; then echo "(sin novedades)"; return; fi
+  tail -n +"$((seen + 1))" "$events" | jq -r "$fmt"
+  [ "${1:-}" = --peek ] || echo "$total" > "$marker"
+}
+
+main() {
+  local cmd="${1:-help}"; shift || true
+  case "$cmd" in
+    init) cmd_init "$@" ;;
+    up) load_project; ensure_base; mkdir -p "$SBX/out"; compose up -d --build ;;
+    down) load_project; compose down ;;
+    restart) load_project; compose restart ;;
+    sh) load_project; compose exec sandbox bash ;;
+    run)
+      load_project
+      [ $# -ge 2 ] || die "uso: sbx run <nombre> <comando...>"
+      compose exec sandbox sbx-run "$@" ;;
+    logs) load_project; compose logs "$@" sandbox ;;
+    ps) docker ps -a --filter "name=^sbx-" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' ;;
+    cron) cmd_cron "$@" ;;
+    inbox) cmd_inbox "$@" ;;
+    base)
+      [ "${1:-}" = build ] || die "uso: sbx base build [alpine|ubuntu|all]"
+      case "${2:-all}" in
+        all) base_build alpine; base_build ubuntu ;;
+        *) base_build "$2" ;;
+      esac ;;
+    help|-h|--help) usage ;;
+    *) usage; exit 1 ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Envuelve cada job del crontab: guarda el log y deja un evento en /out/events.jsonl
+# para que Claude Code en el host se entere de que terminó.
+#   uso: sbx-run <nombre-del-job> <comando...>
+set -uo pipefail
+job="$1"; shift
+start=$(date +%s)
+stamp=$(date +%Y%m%d-%H%M%S)
+log="runs/${stamp}-${job}.log"
+
+cd /workspace
+"$@" > "/out/${log}" 2>&1
+code=$?
+
+jq -cn --arg job "$job" --arg cmd "$*" --arg log ".sandbox/out/${log}" \
+       --arg ts "$(date -Iseconds)" --argjson exit "$code" \
+       --argjson secs "$(( $(date +%s) - start ))" \
+       '{ts:$ts, job:$job, exit:$exit, secs:$secs, cmd:$cmd, log:$log}' >> /out/events.jsonl
+echo "[sbx-run] ${job} terminó con código ${code} (${log})"
+exit "$code"

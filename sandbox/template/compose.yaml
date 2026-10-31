@@ -1,0 +1,12 @@
+# Lo levanta `sbx up`, que le pone el nombre sbx-<carpeta del proyecto>.
+services:
+  sandbox:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ..:/workspace:ro     # código: lectura y ejecución, sin escritura
+      - ./out:/out           # salida: logs y eventos para el host
+    cpus: 1
+    mem_limit: 512m
+    security_opt:
+      - no-new-privileges:true

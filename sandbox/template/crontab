@@ -1,0 +1,6 @@
+# Cron del proyecto. Corre dentro del contenedor, nunca en la Mac.
+# Cada línea usa sbx-run para que el resultado le llegue a Claude Code.
+# Agregar con: sbx cron add "<expresión>" <nombre> <comando...>
+#
+# Ejemplo:
+# */15 * * * * sbx-run ejemplo python3 scripts/ejemplo.py
