@@ -30,7 +30,12 @@ ENV TZ=${TZ} \
     PYTHONUNBUFFERED=1
 
 COPY sbx-run entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/sbx-run /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/sbx-run /usr/local/bin/entrypoint.sh; \
+    if command -v adduser >/dev/null && ! command -v useradd >/dev/null; then adduser -D -u 10001 sbx; \
+    else useradd -m -u 10001 sbx; fi
+
+# Los jobs corren sin root.
+USER sbx
 
 # /workspace: código del proyecto, solo lectura.
 # /out:       único lugar con escritura (logs, resultados, eventos para el host).

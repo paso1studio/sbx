@@ -115,20 +115,40 @@ cmd_cron() {
 # Muestra los eventos que dejó sbx-run. Por defecto solo los no leídos y los marca como leídos.
 cmd_inbox() {
   load_project
-  local events="$SBX/out/events.jsonl" marker="$SBX/out/.inbox-leidos"
-  local fmt='"\(.ts)  \(.job)  exit=\(.exit)  \(.secs)s  \(.log)"'
-  [ -f "$events" ] || { echo "(sin eventos)"; return; }
+  # out/ lo escribe el contenedor: no se confía en nada de ahí. El marcador de leídos
+  # vive fuera de out/ y no se siguen enlaces simbólicos.
+  local events="$SBX/out/events.jsonl"
+  local state="${XDG_STATE_HOME:-$HOME/.local/state}/sbx"
+  local marker="$state/$NAME.inbox-leidos"
+  [ -L "$SBX/out" ] || [ -L "$SBX/out/runs" ] && die "out/ contiene enlaces simbólicos; no se lee"
+  [ -f "$events" ] && [ ! -L "$events" ] || { echo "(sin eventos)"; return; }
+  # Solo pasan eventos con forma conocida; lo demás se descarta.
+  local filtro='fromjson? | select(
+      (.ts | type == "string" and test("^[0-9T:+-]{19,25}$"))
+      and (.job | type == "string" and test("^[A-Za-z0-9_-]{1,64}$"))
+      and (.exit | type == "number") and (.secs | type == "number")
+      and (.log | type == "string" and test("^\\.sandbox/out/runs/[A-Za-z0-9_.-]{1,128}\\.log$")))
+    | "\(.ts)  \(.job)  exit=\(.exit)  \(.secs)s  \(.log)"'
   case "${1:-}" in
-    --follow) exec tail -n0 -F "$events" | jq --unbuffered -r "$fmt" ;;
-    --all) jq -r "$fmt" "$events"; return ;;
+    --follow) exec tail -n0 -F "$events" | jq --unbuffered -R -r "$filtro" ;;
+    --all) jq -R -r "$filtro" "$events"; return ;;
   esac
   local total seen=0
   total=$(wc -l < "$events" | tr -d ' ')
-  [ -f "$marker" ] && seen=$(cat "$marker")
-  [ "$seen" -le "$total" ] || seen=0
+  [ -f "$marker" ] && [ ! -L "$marker" ] && seen=$(tr -cd '0-9' < "$marker")
+  [ -n "$seen" ] && [ "$seen" -le "$total" ] || seen=0
   if [ "$total" -eq "$seen" ]; then echo "(sin novedades)"; return; fi
-  tail -n +"$((seen + 1))" "$events" | jq -r "$fmt"
-  [ "${1:-}" = --peek ] || echo "$total" > "$marker"
+  tail -n +"$((seen + 1))" "$events" | head -n "$((total - seen))" | jq -R -r "$filtro" \
+    | while IFS= read -r linea; do
+        # El log tiene que ser un archivo común, no un enlace a algo de la Mac.
+        local log="$ROOT/${linea##* }"
+        [ -f "$log" ] && [ ! -L "$log" ] && echo "$linea"
+      done
+  if [ "${1:-}" != --peek ]; then
+    mkdir -p "$state"
+    rm -f "$marker"
+    echo "$total" > "$marker"
+  fi
 }
 
 main() {

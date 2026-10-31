@@ -19,6 +19,14 @@ MOTIVO = (
 
 LAUNCHD_DIRS = re.compile(r"Library/Launch(Agents|Daemons)/|/etc/(crontab|periodic)|/usr/lib/cron|/var/at/")
 PREFIJOS = {"sudo", "env", "command", "exec", "nohup", "time", "nice", "xargs"}
+# Comandos que ejecutan código que este hook no puede leer bien (bash -c, | sh, eval,
+# python -c, heredoc a un shell...). Si aparecen junto a una palabra de cron, se bloquea.
+INTERPRETES = {"sh", "bash", "zsh", "dash", "ksh", "fish", "eval", "source", ".",
+               "python", "python3", "perl", "ruby", "node", "osascript", "expect"}
+PALABRAS_CRON = re.compile(
+    r"(?<![\w./-])crontab\b|\blaunchctl\b|Launch(Agents|Daemons)|\bbrew\s+services\b"
+    r"|(?<![\w./-])(atq|atrm)\b|(?<![\w./-])at\s+(-\w+\s+)*(now|noon|midnight|teatime|\d)"
+)
 
 
 def sin_heredocs(cmd):
@@ -47,7 +55,11 @@ def segmentos(cmd):
 
 
 def bloquea_bash(cmd):
-    for p in segmentos(cmd):
+    partes = list(segmentos(cmd))
+    if any(p[0] in INTERPRETES or re.match(r"^python3?(\.\d+)?$", p[0]) for p in partes) \
+            and PALABRAS_CRON.search(cmd):
+        return True
+    for p in partes:
         if p[0] in {"crontab", "at", "batch", "atq", "atrm"}:
             return True
         if p[0] == "launchctl" and len(p) > 1 and p[1] in {"load", "bootstrap", "submit", "enable", "kickstart"}:
