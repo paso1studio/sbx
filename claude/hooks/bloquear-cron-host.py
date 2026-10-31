@@ -80,6 +80,7 @@ def sin_heredocs(cmd):
 
 
 SEPARADORES = set(";&|()\n`")
+OPERADORES = re.compile(r"&>>?|>>|>\||>&|<<<|<<-?|<>|<&|&&|\|\||;;|[;&|()<>\n`]")
 
 
 def analizar(cmd):
@@ -91,9 +92,16 @@ def analizar(cmd):
     lex.whitespace = " \t\r"   # el salto de línea separa comandos
     lex.commenters = ""        # un # no se come el resto de la línea
     try:
-        tokens = list(lex)
+        crudos = list(lex)
     except ValueError:
         return None
+    # shlex junta signos seguidos (";>", ">(", ");"): se separan en operadores sueltos.
+    tokens = []
+    for t in crudos:
+        if t and set(t) <= set(";&|()<>\n`"):
+            tokens.extend(OPERADORES.findall(t))
+        else:
+            tokens.append(t)
 
     partes, destinos, actual = [], [], []
     i = 0
@@ -163,7 +171,7 @@ def bloquea_bash(cmd):
     partes, destinos = analizado
     # Se busca en todo el comando, cuerpo de heredocs incluido: si se lo pasan a un
     # shell (bash <<EOF), ese shell no es de solo lectura y se bloquea.
-    if PALABRAS_CRON.search(cmd) and not all(es_lectura(pre, p) for pre, p in partes):
+    if menciona_cron and not all(es_lectura(pre, p) for pre, p in partes):
         return True
     for _, p in partes:
         if p[0] in {"crontab", "at", "batch", "atq", "atrm"} and p not in CRON_LECTURA:
