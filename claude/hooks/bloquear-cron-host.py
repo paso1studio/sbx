@@ -7,6 +7,7 @@ Sale con código 2 para que Claude Code cancele la herramienta y lea el motivo.
 import json
 import os
 import re
+import shlex
 import sys
 
 MOTIVO = (
@@ -78,22 +79,56 @@ def sin_heredocs(cmd):
     return "\n".join(salida)
 
 
-def segmentos(cmd):
-    # Corta el comando en sus partes ejecutables: ; & | && || ( ) $( ` y saltos de línea.
-    # 2>&1, >&2 y &> son redirecciones, no separadores: se sacan antes de cortar.
-    limpio = re.sub(r"\d*>&\d*-?|&>>?", " ", sin_heredocs(cmd))
-    # El texto entre comillas no separa comandos ("(sin Apple)", 'a; b'). Las comillas
-    # dobles con $( ) o ` ` sí ejecutan algo, así que esas se dejan como están.
-    limpio = re.sub(r"'[^']*'", "''", limpio)
-    limpio = re.sub(r'"[^"$`]*"', '""', limpio)
-    for seg in re.split(r"\|\||&&|[;&|()`\n]|\$\(", limpio):
-        palabras = seg.split()
+SEPARADORES = set(";&|()\n`")
+
+
+def analizar(cmd):
+    """Corta el comando en partes ejecutables con shlex, que respeta comillas y escapes
+    como el shell. Devuelve (partes, destinos): cada parte es (prefijado, palabras) y
+    destinos son los archivos a los que se redirige la salida (>, >>, &>, >|).
+    Si el comando no se puede interpretar (comillas sin cerrar), devuelve None."""
+    lex = shlex.shlex(sin_heredocs(cmd), posix=True, punctuation_chars=";&|()<>\n`")
+    lex.whitespace = " \t\r"   # el salto de línea separa comandos
+    lex.commenters = ""        # un # no se come el resto de la línea
+    try:
+        tokens = list(lex)
+    except ValueError:
+        return None
+
+    partes, destinos, actual = [], [], []
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t and set(t) <= SEPARADORES:  # ; && || | & ( ) ` salto de línea
+            partes.append(actual)
+            actual = []
+        elif t and set(t) <= set("<>&|") and set(t) & set("<>"):
+            # Redirección: la palabra siguiente es su destino. Un número justo antes
+            # (el 2 de 2>&1) es el descriptor, no un argumento.
+            if actual and actual[-1].isdigit():
+                actual.pop()
+            destino = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if set(destino) <= SEPARADORES:
+                destino = ""
+            else:
+                i += 1
+            dup = t.endswith(">&") and re.fullmatch(r"\d+|-", destino)
+            if ">" in t and not dup:
+                destinos.append(destino)
+        else:
+            actual.append(t)
+        i += 1
+    partes.append(actual)
+
+    resultado = []
+    for palabras in partes:
         prefijado = False
         while palabras and (palabras[0] in PREFIJOS or re.match(r"^\w+=", palabras[0])):
-            palabras.pop(0)
+            palabras = palabras[1:]
             prefijado = True
         if palabras:
-            yield prefijado, [os.path.basename(palabras[0])] + palabras[1:]
+            resultado.append((prefijado, [os.path.basename(palabras[0])] + palabras[1:]))
+    return resultado, destinos
 
 
 # Formas exactas que solo muestran lo programado.
@@ -105,6 +140,9 @@ def es_lectura(prefijado, p):
     # Redirigir a un archivo sí se permite: escribir en las carpetas de cron lo frena
     # LAUNCHD_DIRS más abajo.
     if prefijado:
+        return False
+    # "$(...)" o `...` dentro de comillas dobles siguen ejecutando un comando.
+    if any("$(" in a or "`" in a for a in p):
         return False
     if p[0] in SOLO_LECTURA or p in CRON_LECTURA:
         return True
@@ -118,7 +156,11 @@ def es_lectura(prefijado, p):
 
 
 def bloquea_bash(cmd):
-    partes = list(segmentos(cmd))
+    menciona_cron = bool(PALABRAS_CRON.search(cmd) or LAUNCHD_DIRS.search(cmd))
+    analizado = analizar(cmd)
+    if analizado is None:  # no se pudo interpretar: si toca algo de cron, se bloquea
+        return menciona_cron
+    partes, destinos = analizado
     # Se busca en todo el comando, cuerpo de heredocs incluido: si se lo pasan a un
     # shell (bash <<EOF), ese shell no es de solo lectura y se bloquea.
     if PALABRAS_CRON.search(cmd) and not all(es_lectura(pre, p) for pre, p in partes):
@@ -134,8 +176,7 @@ def bloquea_bash(cmd):
         if p[0] in {"cp", "mv", "ln", "install", "tee", "rsync", "ditto", "touch"} \
                 and any(LAUNCHD_DIRS.search(a) for a in p[1:]):
             return True
-    # Redirigir la salida (>, >>) hacia una de esas carpetas.
-    destinos = re.findall(r">>?\s*['\"]?([^\s'\";&|]+)", re.sub(r"\d*>&\d*-?", " ", cmd))
+    # Redirigir la salida (>, >>, &>, >|) hacia una de esas carpetas.
     return any(LAUNCHD_DIRS.search(d) for d in destinos)
 
 
