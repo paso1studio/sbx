@@ -47,6 +47,7 @@ ENV PATH=/home/sbx/.local/bin:$PATH \
     USE_BUILTIN_RIPGREP=0 \
     UV_PROJECT_ENVIRONMENT=/home/sbx/.cache/venv \
     UV_CACHE_DIR=/home/sbx/.cache/uv \
+    UV_PYTHON_INSTALL_DIR=/home/sbx/.cache/uv-python \
     UV_LINK_MODE=copy
 RUN mkdir -p /home/sbx/.claude /home/sbx/.cache; \
     curl -fsSL https://claude.ai/install.sh | bash; \
