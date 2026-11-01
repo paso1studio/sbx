@@ -3,10 +3,23 @@ services:
   sandbox:
     build: .
     restart: unless-stopped
+    # Secretos del proyecto: ~/.config/sbx/<carpeta>.env (permisos 600, fuera del repo).
+    # Los .env del repo no se ven adentro: sbx los tapa con /dev/null.
+    env_file:
+      - path: ${SBX_ENV_FILE:-/dev/null}
+        required: false
     volumes:
       - ..:/workspace:ro     # código: lectura y ejecución, sin escritura
       - ./out:/out           # salida: logs y eventos para el host
+      - claude:/home/sbx/.claude   # sesión de Claude Code (sbx claude → /login)
+      - cache:/home/sbx/.cache     # entorno virtual y caché de uv
+      # Carpetas del repo donde el job necesita escribir, si hace falta:
+      # - ../data:/workspace/data
     cpus: 1
     mem_limit: 512m
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  claude:
+  cache:

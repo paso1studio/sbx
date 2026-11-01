@@ -16,6 +16,7 @@ uso: sbx <comando>
   init [alpine|ubuntu]           crea .sandbox/ en el proyecto actual
   up | down | restart            levanta, baja o reinicia el contenedor
   sh                             abre una shell dentro del contenedor
+  claude [args]                  Claude Code dentro del contenedor (para hacer /login)
   run <nombre> <comando...>      corre un job una vez ahora (igual que el cron)
   logs [-f]                      salida de supercronic
   ps                             todos los sandbox de la Mac
@@ -46,7 +47,29 @@ load_project() {
   NAME="sbx-$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_\n-' '-')"
 }
 
-compose() { docker compose -p "$NAME" -f "$SBX/compose.yaml" "$@"; }
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/sbx"
+
+# Tapa con /dev/null los .env del repo, así el contenedor solo ve los secretos de
+# ~/.config/sbx/<proyecto>.env. El archivo vive en la Mac, fuera del alcance del contenedor.
+mascaras() {
+  local out="$STATE/$NAME.mascaras.yaml" f
+  mkdir -p "$STATE"
+  {
+    echo "services:"
+    echo "  sandbox:"
+    echo "    volumes:"
+    echo "      - /dev/null:/tmp/.sbx-sin-mascaras:ro"
+    find "$ROOT" \( -name .git -o -name .venv -o -name node_modules -o -name .sandbox \) -prune -o \
+         -maxdepth 4 -type f -name '.env*' ! -name '.env.example' -print 2>/dev/null \
+      | while IFS= read -r f; do echo "      - /dev/null:/workspace/${f#"$ROOT"/}:ro"; done
+  } > "$out"
+  echo "$out"
+}
+
+compose() {
+  SBX_ENV_FILE="$HOME/.config/sbx/${NAME#sbx-}.env" \
+    docker compose -p "$NAME" -f "$SBX/compose.yaml" -f "$(mascaras)" "$@"
+}
 
 base_os() { sed -n 's/^FROM sbx-base:\([a-z]*\).*/\1/p' "$SBX/Dockerfile" | head -1; }
 
@@ -159,6 +182,7 @@ main() {
     down) load_project; compose down ;;
     restart) load_project; compose restart ;;
     sh) load_project; compose exec sandbox bash ;;
+    claude) load_project; compose exec sandbox claude "$@" ;;
     run)
       load_project
       [ $# -ge 2 ] || die "uso: sbx run <nombre> <comando...>"

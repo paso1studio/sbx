@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Reemplazo de osascript dentro del sandbox: en Linux no hay notificaciones de macOS.
+# Guarda lo que se quería mostrar en /out/notificaciones.log; el aviso real llega por el
+# inbox de sbx cuando termina el job.
+echo "$(date -Iseconds) $*" >> /out/notificaciones.log 2>/dev/null
+exit 0
