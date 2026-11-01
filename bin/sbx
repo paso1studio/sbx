@@ -59,11 +59,23 @@ mascaras() {
     echo "  sandbox:"
     echo "    volumes:"
     echo "      - /dev/null:/tmp/.sbx-sin-mascaras:ro"
-    # Sin límite de profundidad y con enlaces simbólicos. Solo se saltean .git y node_modules
-    # (enormes y sin .env propios). Se regenera en cada llamada a compose (up, exec, run).
-    find "$ROOT" \( -name .git -o -name node_modules \) -prune -o \
-         \( -type f -o -type l \) -name '.env*' ! -name '.env.example' -print 2>/dev/null \
-      | while IFS= read -r f; do echo "      - /dev/null:/workspace/${f#"$ROOT"/}:ro"; done
+    # Sin límite de profundidad y con enlaces simbólicos. Se regenera en cada llamada a
+    # compose (up, exec, run). Se saltean .git, node_modules y .sandbox: esta última la
+    # escribe el contenedor, y un nombre de archivo armado desde adentro no puede llegar a
+    # este YAML. Por lo mismo solo pasan rutas con caracteres seguros, citadas con jq.
+    local n=0 rel real
+    while IFS= read -r -d '' f; do
+      rel="${f#"$ROOT"/}"
+      [[ "$rel" =~ ^[A-Za-z0-9._/@+-]+$ && "$rel" != *..* ]] || continue
+      if [ -L "$f" ]; then  # un enlace solo se tapa si apunta a un archivo del repo
+        real="$(readlink -f "$f" 2>/dev/null)" || continue
+        [[ "$real" == "$ROOT"/* && -f "$real" ]] || continue
+      fi
+      jq -cn --arg t "/workspace/$rel" '{type: "bind", source: "/dev/null", target: $t, read_only: true}' \
+        | sed 's/^/      - /'
+      n=$((n + 1)); [ "$n" -lt 50 ] || break
+    done < <(find "$ROOT" \( -name .git -o -name node_modules -o -path "$ROOT/.sandbox" \) -prune -o \
+                  \( -type f -o -type l \) -name '.env*' ! -name '.env.example' -print0 2>/dev/null)
   } > "$out"
   echo "$out"
 }
