@@ -58,10 +58,18 @@ mascaras() {
   # Se saltean .git, node_modules y todo lo que el contenedor puede escribir (.sandbox y las
   # carpetas montadas con escritura en compose.yaml): un archivo creado desde adentro no
   # puede decidir qué se monta. Lo demás lo escribió alguien en la Mac.
-  local podar=(-name .git -o -name node_modules -o -path "$raiz/.sandbox")
-  while IFS= read -r rel; do
-    podar+=(-o -path "$raiz/$rel")
-  done < <(sed -nE 's#^[[:space:]]*-[[:space:]]*\.\./([^:]+):/workspace[^:[:space:]]*[[:space:]]*(\#.*)?$#\1#p' "$SBX/compose.yaml")
+  local podar=(-name .git -o -name node_modules -o -path "$raiz/.sandbox") fuentes src
+  # Las carpetas con escritura salen de la configuración que arma docker compose, no del
+  # texto del YAML. Si no se puede leer, no se levanta.
+  fuentes="$(compose_base config --format json | jq -r '.services[].volumes[]?
+      | select(.type == "bind" and (.read_only | not)) | .source')" \
+    || { echo "sbx: no se pudo leer la configuración de compose" >&2; return 1; }
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    src="$(cd "$src" 2>/dev/null && pwd -P)" || continue
+    [[ "$src" == "$raiz" ]] && { echo "sbx: el repo entero está montado con escritura" >&2; return 1; }
+    [[ "$src" == "$raiz"/* ]] && podar+=(-o -path "$src")
+  done <<< "$fuentes"
 
   {
     echo "services:"
@@ -82,10 +90,16 @@ mascaras() {
   echo "$out"
 }
 
+# Sin máscaras: para bajar, ver logs o mandar señales, que no crean contenedores nuevos.
+compose_base() {
+  SBX_ENV_FILE="$HOME/.config/sbx/${NAME#sbx-}.env" \
+    docker compose -p "$NAME" -f "$SBX/compose.yaml" "$@"
+}
+
+# Con máscaras: para up, exec y run.
 compose() {
   local m; m="$(mascaras)" || exit 1
-  SBX_ENV_FILE="$HOME/.config/sbx/${NAME#sbx-}.env" \
-    docker compose -p "$NAME" -f "$SBX/compose.yaml" -f "$m" "$@"
+  compose_base -f "$m" "$@"
 }
 
 base_os() { sed -n 's/^FROM sbx-base:\([a-z]*\).*/\1/p' "$SBX/Dockerfile" | head -1; }
@@ -108,8 +122,8 @@ ensure_base() {
 }
 
 cron_reload() {
-  if [ -n "$(compose ps -q sandbox 2>/dev/null)" ]; then
-    compose kill -s USR2 sandbox >/dev/null && echo "crontab recargado en $NAME"
+  if [ -n "$(compose_base ps -q sandbox 2>/dev/null)" ]; then
+    compose_base kill -s USR2 sandbox >/dev/null && echo "crontab recargado en $NAME"
   else
     echo "el contenedor está apagado; el crontab se lee al hacer: sbx up"
   fi
@@ -196,15 +210,15 @@ main() {
   case "$cmd" in
     init) cmd_init "$@" ;;
     up) load_project; ensure_base; mkdir -p "$SBX/out"; compose up -d --build ;;
-    down) load_project; compose down ;;
-    restart) load_project; compose restart ;;
+    down) load_project; compose_base down ;;
+    restart) load_project; compose_base restart ;;
     sh) load_project; compose exec sandbox bash ;;
     claude) load_project; compose exec sandbox claude "$@" ;;
     run)
       load_project
       [ $# -ge 2 ] || die "uso: sbx run <nombre> <comando...>"
       compose exec sandbox sbx-run "$@" ;;
-    logs) load_project; compose logs "$@" sandbox ;;
+    logs) load_project; compose_base logs "$@" sandbox ;;
     ps) docker ps -a --filter "name=^sbx-" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' ;;
     cron) cmd_cron "$@" ;;
     inbox) cmd_inbox "$@" ;;
