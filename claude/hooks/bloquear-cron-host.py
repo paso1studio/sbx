@@ -31,6 +31,8 @@ SOLO_LECTURA = {"cat", "head", "tail", "grep", "egrep", "fgrep", "ls", "echo", "
 GIT_LECTURA = {"init", "status", "log", "diff", "show", "branch"}
 GIT_OPCIONES_EXEC = re.compile(r"^(-c|--config-env|--exec-path|--ext-diff|--upload-pack|--receive-pack|-x|--exec)")
 LAUNCHCTL_LECTURA = {"list", "print", "print-disabled", "print-cache", "blame", "version", "help"}
+# Desprogramar no ensucia la Mac: se permite bajar agentes.
+LAUNCHCTL_DESPROGRAMAR = {"bootout", "unload", "remove", "disable"}
 PALABRAS_CRON = re.compile(
     r"(?<![\w./-])crontab\b|\blaunchctl\b|Launch(Agents|Daemons)|\bbrew\s+services\b"
     r"|(?<![\w./-])(atq|atrm)\b|(?<![\w./-])at\s+(-\w+\s+)*(now|noon|midnight|teatime|\d)"
@@ -157,7 +159,12 @@ def es_lectura(prefijado, p):
     if p[0] == "git":
         return len(p) > 1 and p[1] in GIT_LECTURA and not any(GIT_OPCIONES_EXEC.match(a) for a in p[1:])
     if p[0] == "launchctl":
-        return len(p) > 1 and p[1] in LAUNCHCTL_LECTURA
+        return len(p) > 1 and p[1] in LAUNCHCTL_LECTURA | LAUNCHCTL_DESPROGRAMAR
+    # Borrar plists (sin -r) también se permite: sacar tareas de la Mac es lo que se busca.
+    if p[0] == "rm":
+        archivos = [a for a in p[1:] if not a.startswith("-")]
+        return bool(archivos) and all(o in ("-f", "-v") for o in p[1:] if o.startswith("-")) \
+            and all(re.search(r"Library/LaunchAgents/[\w.-]+\.plist$", a) for a in archivos)
     if p[0] == "brew":
         return p[1:3] in (["services", "list"], ["services", "info"])
     return False
