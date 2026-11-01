@@ -52,37 +52,40 @@ STATE="${XDG_STATE_HOME:-$HOME/.local/state}/sbx"
 # Tapa con /dev/null los .env del repo, así el contenedor solo ve los secretos de
 # ~/.config/sbx/<proyecto>.env. El archivo vive en la Mac, fuera del alcance del contenedor.
 mascaras() {
-  local out="$STATE/$NAME.mascaras.yaml" f
+  local out="$STATE/$NAME.mascaras.yaml" f rel n=0
+  local raiz; raiz="$(cd "$ROOT" && pwd -P)"
   mkdir -p "$STATE"
+  # Se saltean .git, node_modules y todo lo que el contenedor puede escribir (.sandbox y las
+  # carpetas montadas con escritura en compose.yaml): un archivo creado desde adentro no
+  # puede decidir qué se monta. Lo demás lo escribió alguien en la Mac.
+  local podar=(-name .git -o -name node_modules -o -path "$raiz/.sandbox")
+  while IFS= read -r rel; do
+    podar+=(-o -path "$raiz/$rel")
+  done < <(sed -nE 's#^[[:space:]]*-[[:space:]]*\.\./([^:]+):/workspace[^:[:space:]]*[[:space:]]*(\#.*)?$#\1#p' "$SBX/compose.yaml")
+
   {
     echo "services:"
     echo "  sandbox:"
     echo "    volumes:"
     echo "      - /dev/null:/tmp/.sbx-sin-mascaras:ro"
-    # Sin límite de profundidad y con enlaces simbólicos. Se regenera en cada llamada a
-    # compose (up, exec, run). Se saltean .git, node_modules y .sandbox: esta última la
-    # escribe el contenedor, y un nombre de archivo armado desde adentro no puede llegar a
-    # este YAML. Por lo mismo solo pasan rutas con caracteres seguros, citadas con jq.
-    local n=0 rel real
     while IFS= read -r -d '' f; do
-      rel="${f#"$ROOT"/}"
-      [[ "$rel" =~ ^[A-Za-z0-9._/@+-]+$ && "$rel" != *..* ]] || continue
-      if [ -L "$f" ]; then  # un enlace solo se tapa si apunta a un archivo del repo
-        real="$(readlink -f "$f" 2>/dev/null)" || continue
-        [[ "$real" == "$ROOT"/* && -f "$real" ]] || continue
-      fi
+      rel="${f#"$raiz"/}"
+      # jq cita la ruta; igual se frena (no se saltea) ante caracteres de control.
+      [[ "$rel" != *[[:cntrl:]]* ]] || { echo "sbx: nombre de archivo raro, no se levanta: $rel" >&2; return 1; }
       jq -cn --arg t "/workspace/$rel" '{type: "bind", source: "/dev/null", target: $t, read_only: true}' \
         | sed 's/^/      - /'
-      n=$((n + 1)); [ "$n" -lt 50 ] || break
-    done < <(find "$ROOT" \( -name .git -o -name node_modules -o -path "$ROOT/.sandbox" \) -prune -o \
+      n=$((n + 1))
+      [ "$n" -le 200 ] || { echo "sbx: más de 200 archivos .env en el repo, no se levanta" >&2; return 1; }
+    done < <(find "$raiz" \( "${podar[@]}" \) -prune -o \
                   \( -type f -o -type l \) -name '.env*' ! -name '.env.example' -print0 2>/dev/null)
   } > "$out"
   echo "$out"
 }
 
 compose() {
+  local m; m="$(mascaras)" || exit 1
   SBX_ENV_FILE="$HOME/.config/sbx/${NAME#sbx-}.env" \
-    docker compose -p "$NAME" -f "$SBX/compose.yaml" -f "$(mascaras)" "$@"
+    docker compose -p "$NAME" -f "$SBX/compose.yaml" -f "$m" "$@"
 }
 
 base_os() { sed -n 's/^FROM sbx-base:\([a-z]*\).*/\1/p' "$SBX/Dockerfile" | head -1; }
