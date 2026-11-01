@@ -59,8 +59,10 @@ mascaras() {
     echo "  sandbox:"
     echo "    volumes:"
     echo "      - /dev/null:/tmp/.sbx-sin-mascaras:ro"
-    find "$ROOT" \( -name .git -o -name .venv -o -name node_modules -o -name .sandbox \) -prune -o \
-         -maxdepth 4 -type f -name '.env*' ! -name '.env.example' -print 2>/dev/null \
+    # Sin límite de profundidad y con enlaces simbólicos. Solo se saltean .git y node_modules
+    # (enormes y sin .env propios). Se regenera en cada llamada a compose (up, exec, run).
+    find "$ROOT" \( -name .git -o -name node_modules \) -prune -o \
+         \( -type f -o -type l \) -name '.env*' ! -name '.env.example' -print 2>/dev/null \
       | while IFS= read -r f; do echo "      - /dev/null:/workspace/${f#"$ROOT"/}:ro"; done
   } > "$out"
   echo "$out"
