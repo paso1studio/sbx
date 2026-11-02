@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sbx: un contenedor Docker por proyecto para los cron y scripts, así la Mac queda limpia.
-# La plantilla vive en el repo macbook (este archivo está en <repo>/bin/sbx).
+# La plantilla y la imagen base viven en este mismo repo (este archivo está en <repo>/bin/sbx).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
