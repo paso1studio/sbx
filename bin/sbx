@@ -20,6 +20,8 @@ uso: sbx <comando>
   run <nombre> <comando...>      corre un job una vez ahora (igual que el cron)
   logs [-f]                      salida de supercronic
   ps                             todos los sandbox de la Mac
+  levantar                       arranca todos los sandbox caídos de la Mac
+  vigia up | down | logs         contenedor que los relevanta solo cuando arranca Docker
 
   cron ls                        lista los cron del proyecto
   cron add "<expr>" <nombre> <comando...>
@@ -205,9 +207,40 @@ cmd_inbox() {
   fi
 }
 
+# Arranca los sandbox que quedaron caídos (por ejemplo, tras un reinicio de Docker que no
+# los relevantó). `sbx down` borra el contenedor, así que uno en "exited" es uno caído.
+# Usa el contenedor tal como estaba: no recalcula máscaras ni reconstruye la imagen.
+cmd_levantar() {
+  local n=0 nombre dir
+  while IFS=$'\t' read -r nombre dir; do
+    [ -n "$nombre" ] || continue
+    # Sin la carpeta del proyecto, Docker crearía carpetas vacías en la Mac al montar.
+    if [ ! -f "$dir/compose.yaml" ]; then
+      echo "salteado: $nombre (ya no existe $dir; borralo con docker rm)"
+      continue
+    fi
+    if docker start "$nombre" >/dev/null; then
+      echo "levantado: $nombre"; n=$((n + 1))
+    else
+      echo "sbx: no se pudo levantar $nombre" >&2
+    fi
+  done < <(docker ps -a --filter "name=^sbx-" --filter status=exited \
+             --format '{{.Names}}\t{{.Label "com.docker.compose.project.working_dir"}}')
+  [ "$n" -gt 0 ] || echo "(no había sandbox caídos para levantar)"
+}
+
 main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
+    levantar) cmd_levantar ;;
+    vigia)
+      local vigia=(docker compose -p sbx-vigia -f "$REPO/sandbox/vigia/compose.yaml")
+      case "${1:-}" in
+        up) "${vigia[@]}" up -d --build ;;
+        down) "${vigia[@]}" down ;;
+        logs) shift; "${vigia[@]}" logs "$@" vigia ;;
+        *) die "uso: sbx vigia up | down | logs [-f]" ;;
+      esac ;;
     init) cmd_init "$@" ;;
     up) load_project; ensure_base; mkdir -p "$SBX/out"; compose up -d --build ;;
     down) load_project; compose_base down ;;

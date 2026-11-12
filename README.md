@@ -40,8 +40,19 @@ proyecto/
 | `sbx inbox [--all\|--follow]` | jobs que terminaron |
 | `sbx claude` | Claude Code dentro del contenedor (para hacer `/login`) |
 | `sbx ps` | todos los sandbox de la máquina |
+| `sbx levantar` | arranca todos los sandbox caídos de la máquina |
+| `sbx vigia up` / `down` / `logs` | contenedor que los relevanta solo cuando arranca Docker |
 
 Los secretos de cada proyecto van en `~/.config/sbx/<carpeta-del-proyecto>.env` (permisos 600). Los `.env` del repo no se ven adentro del contenedor: `sbx` los tapa con `/dev/null`.
+
+## Sandbox caídos tras un reinicio
+
+Los sandbox llevan `restart: unless-stopped`, pero Docker Desktop no siempre los relevanta a todos cuando arranca: alguno puede quedar en `Exited`, y cuál varía de un arranque a otro. Mientras está caído, sus cron no corren.
+
+- `sbx levantar` arranca todos los contenedores `sbx-*` caídos, tal como estaban (no reconstruye la imagen ni recalcula las máscaras de los `.env`). Saltea los que ya no tienen la carpeta del proyecto, para que Docker no cree carpetas vacías al montarla.
+- `sbx vigia up` deja corriendo un contenedor (`sandbox/vigia/`) que arranca con Docker y, a los 30 segundos, levanta los sandbox que ese arranque dejó caídos; reintenta una vez por minuto, hasta 10 veces. No toca un sandbox frenado a mano más tarde ni uno caído de antes: para esos está `sbx levantar`. Se instala una sola vez para toda la máquina.
+
+El vigía monta el socket de Docker, así que puede manejar todo Docker. Por eso corre sin red, con el sistema de archivos en solo lectura, sin capacidades y con el script dentro de la imagen. Solo sirve si Docker arranca: conviene activar en Docker Desktop el inicio al abrir sesión.
 
 ## Cómo se entera Claude Code
 

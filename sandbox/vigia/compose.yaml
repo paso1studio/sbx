@@ -1,0 +1,19 @@
+# Lo levanta `sbx vigia up`. Un solo vigía para todos los sandbox de la Mac.
+services:
+  vigia:
+    build: .
+    restart: always
+    # El socket es lo único que monta, y vive en la VM de Docker: no depende de las carpetas
+    # compartidas de la Mac, así que arranca aunque esas todavía no estén listas.
+    # Ojo: con el socket este contenedor puede manejar todo Docker. Por eso no tiene red,
+    # no monta nada del host y solo corre vigia.sh, que viene dentro de la imagen.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.25
+    mem_limit: 64m
