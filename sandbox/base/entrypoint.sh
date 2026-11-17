@@ -12,5 +12,7 @@ touch /out/events.jsonl
 if [ -f "$SERVICIO" ]; then
   ( while true; do sbx-run servicio bash "$SERVICIO" || true; sleep 30; done ) &
 fi
-# -inotify recarga solo cuando el archivo cambia; además `sbx cron reload` manda SIGUSR2.
-exec supercronic -inotify -passthrough-logs "$CRONTAB"
+# El crontab se recarga solo con SIGUSR2 (`sbx cron add`, `rm` y `reload`). Sin -inotify: con
+# `sbx cron add` (>>) recargaba dos veces, y con `sbx cron rm` (sed -i, archivo nuevo) perdía la
+# vigilancia del archivo y no se enteraba de ese cambio ni de los siguientes.
+exec supercronic -passthrough-logs "$CRONTAB"

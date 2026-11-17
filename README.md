@@ -35,7 +35,8 @@ proyecto/
 | `sbx init [alpine\|ubuntu]` | crea `.sandbox/` |
 | `sbx up` / `down` / `sh` / `logs` | maneja el contenedor |
 | `sbx cron add "*/15 * * * *" nombre python3 scripts/x.py` | agrega un cron y lo recarga |
-| `sbx cron ls` / `rm nombre` | lista o borra |
+| `sbx cron ls` / `rm nombre` | lista o borra (y recarga) |
+| `sbx cron reload` | relee el crontab después de editarlo a mano: el contenedor no se entera solo |
 | `sbx run nombre comando...` | corre un job una vez ahora |
 | `sbx inbox [--all\|--follow]` | jobs que terminaron |
 | `sbx claude` | Claude Code dentro del contenedor (para hacer `/login`) |

@@ -26,7 +26,7 @@ uso: sbx <comando>
   cron ls                        lista los cron del proyecto
   cron add "<expr>" <nombre> <comando...>
   cron rm <nombre>
-  cron reload
+  cron reload                    relee el crontab después de editarlo a mano
 
   inbox [--all|--peek|--follow]  resultados de los jobs que terminaron
   base build [alpine|ubuntu|all] reconstruye la imagen base
