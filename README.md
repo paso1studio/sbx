@@ -8,6 +8,10 @@ bash, `jq`, `python3` (para el hook) y Docker con `docker compose`.
 
 ## Instalación
 
+> **Antes de instalar:** `install.sh` modifica tu configuración de Claude Code. Agrega tres hooks (PreToolUse, SessionStart y UserPromptSubmit) a `~/.claude/settings.json`, enlaza dos scripts en `~/.claude/hooks/` y crea `~/.local/bin/sbx`. Antes de tocar `settings.json` guarda una copia en `settings.json.bak-sbx`, y un archivo que ya exista en el destino se renombra a `.antes-de-sbx`. Para deshacerlo, restaurá esa copia y borrá los enlaces.
+>
+> El hook `bloquear-cron-host.py` frena `crontab`, `at`, `launchctl` y `brew services` en esa máquina, para todos los proyectos. Está pensado para macOS con Docker Desktop.
+
 ```bash
 git clone <url-de-este-repo> ~/workspace/personal/sbx
 ~/workspace/personal/sbx/install.sh

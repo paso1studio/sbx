@@ -6,7 +6,8 @@ FROM ${BASE}
 
 ARG TARGETARCH
 ARG SUPERCRONIC_VERSION=v0.2.33
-ARG TZ=America/Argentina/Buenos_Aires
+# `sbx base build` pasa la zona horaria de la máquina; UTC solo si se construye a mano sin --build-arg TZ.
+ARG TZ=UTC
 
 # Paquetes mínimos + supercronic (demonio de cron pensado para contenedores).
 RUN set -eux; \
