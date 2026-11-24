@@ -13,8 +13,8 @@ bash, `jq`, `python3` (para el hook) y Docker con `docker compose`.
 > El hook `bloquear-cron-host.py` frena `crontab`, `at`, `launchctl` y `brew services` en esa máquina, para todos los proyectos. Está pensado para macOS con Docker Desktop.
 
 ```bash
-git clone <url-de-este-repo> ~/workspace/personal/sbx
-~/workspace/personal/sbx/install.sh
+git clone https://github.com/gmaron/sbx.git ~/sbx
+~/sbx/install.sh
 ```
 
 Enlaza `bin/sbx` → `~/.local/bin/sbx` y los hooks → `~/.claude/hooks/`, registra los hooks en `~/.claude/settings.json` (respaldo en `settings.json.bak-sbx`) y construye la imagen base. Se puede correr las veces que haga falta.
