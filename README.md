@@ -1,81 +1,109 @@
 # sbx
 
-Un contenedor Docker por proyecto para los cron y scripts que se repiten, así la computadora queda limpia. Incluye dos hooks para que Claude Code programe tareas ahí adentro y se entere de cómo terminaron.
+**English** · [Español](README.es.md)
 
-## Requisitos
+One Docker container per project for the cron jobs and scripts that run on repeat, so your computer stays clean. It also ships two hooks so Claude Code can schedule work inside that container and find out how each job ended.
 
-bash, `jq`, `python3` (para el hook) y Docker con `docker compose`.
+## What it solves
 
-## Instalación
+- **Your machine fills up with schedulers.** Cron entries, launchd plists and `brew services` pile up across projects, and nobody remembers which one belongs to what. With `sbx`, every project's jobs live in its own `.sandbox/` folder, versioned with the project. Remove the project and nothing is left behind on the host.
+- **Jobs written by an AI agent run with your full permissions.** The container mounts your code **read-only** at `/workspace` and gives jobs a single writable folder, `/out`. It runs with `no-new-privileges` and CPU and memory limits.
+- **Claude Code can't see what happened after it schedules something.** Every job is wrapped by `sbx-run`, which saves its log and appends an event to `out/events.jsonl`. A hook hands Claude the jobs that finished since it last looked, so it can react without polling.
+- **Agents reach for the host scheduler by habit.** A `PreToolUse` hook blocks `crontab`, `at`, `launchctl` and `brew services`, and tells Claude to use `sbx` instead.
+- **Secrets leak into the container.** Each project's secrets live outside the repo, in `~/.config/sbx/<project>.env` (mode 600). Any `.env` inside the repo is masked with `/dev/null`, so jobs can't read it.
+- **Docker Desktop leaves some containers stopped after a reboot, and their cron silently stops.** `sbx levantar` and `sbx vigia` bring them back.
 
-> **Antes de instalar:** `install.sh` modifica tu configuración de Claude Code. Agrega tres hooks (PreToolUse, SessionStart y UserPromptSubmit) a `~/.claude/settings.json`, enlaza dos scripts en `~/.claude/hooks/` y crea `~/.local/bin/sbx`. Antes de tocar `settings.json` guarda una copia en `settings.json.bak-sbx`, y un archivo que ya exista en el destino se renombra a `.antes-de-sbx`. Para deshacerlo, restaurá esa copia y borrá los enlaces.
+## Requirements
+
+bash, `jq`, `python3` (for the hook) and Docker with `docker compose`. Built and tested on macOS with Docker Desktop. Linux hasn't been tested.
+
+## Installation
+
+> **Before you install:** `install.sh` changes your Claude Code configuration. It adds three hooks (PreToolUse, SessionStart and UserPromptSubmit) to `~/.claude/settings.json`, links two scripts into `~/.claude/hooks/` and creates `~/.local/bin/sbx`. Before touching `settings.json` it saves a copy to `settings.json.bak-sbx`, and any file already at a destination is renamed to `.antes-de-sbx`. To undo it, restore that copy and delete the links.
 >
-> El hook `bloquear-cron-host.py` frena `crontab`, `at`, `launchctl` y `brew services` en esa máquina, para todos los proyectos. Está pensado para macOS con Docker Desktop.
+> The hook `bloquear-cron-host.py` blocks `crontab`, `at`, `launchctl` and `brew services` on that machine, for every project.
 
 ```bash
 git clone https://github.com/paso1studio/sbx.git ~/sbx
 ~/sbx/install.sh
 ```
 
-Enlaza `bin/sbx` → `~/.local/bin/sbx` y los hooks → `~/.claude/hooks/`, registra los hooks en `~/.claude/settings.json` (respaldo en `settings.json.bak-sbx`) y construye la imagen base. Se puede correr las veces que haga falta.
+It links `bin/sbx` → `~/.local/bin/sbx` and the hooks → `~/.claude/hooks/`, registers the hooks in `~/.claude/settings.json` and builds the base image. You can run it as many times as you like.
 
-## Sandbox por proyecto
+## Per-project sandbox
 
-Cada proyecto lleva un `.sandbox/` con su contenedor Docker. Los cron corren ahí adentro con [supercronic](https://github.com/aptible/supercronic), nunca en el host.
+Each project gets a `.sandbox/` folder with its own Docker container. Cron jobs run inside it with [supercronic](https://github.com/aptible/supercronic), never on the host.
 
 ```
-proyecto/
+project/
 └── .sandbox/
     ├── Dockerfile        FROM sbx-base:alpine | sbx-base:ubuntu
-    ├── compose.yaml      proyecto → /workspace (solo lectura), .sandbox/out → /out
-    ├── crontab           los cron, versionados con el proyecto
-    ├── packages.txt      paquetes apk/apt
-    ├── requirements.txt  dependencias pip
-    └── out/              logs, resultados y events.jsonl (fuera de git)
+    ├── compose.yaml      project → /workspace (read-only), .sandbox/out → /out
+    ├── crontab           the cron jobs, versioned with the project
+    ├── packages.txt      apk/apt packages
+    ├── requirements.txt  pip dependencies
+    └── out/              logs, results and events.jsonl (git-ignored)
 ```
 
-| Comando | Qué hace |
+Quick start:
+
+```bash
+cd my-project
+sbx init                                  # or: sbx init ubuntu (if you need glibc)
+sbx up
+sbx run hello python3 scripts/hello.py    # try a job once, right now
+sbx cron add "*/15 * * * *" hello python3 scripts/hello.py
+sbx inbox                                 # jobs that finished
+```
+
+| Command | What it does |
 |---|---|
-| `sbx init [alpine\|ubuntu]` | crea `.sandbox/` |
-| `sbx up` / `down` / `sh` / `logs` | maneja el contenedor |
-| `sbx cron add "*/15 * * * *" nombre python3 scripts/x.py` | agrega un cron y lo recarga |
-| `sbx cron ls` / `rm nombre` | lista o borra (y recarga) |
-| `sbx cron reload` | relee el crontab después de editarlo a mano: el contenedor no se entera solo |
-| `sbx run nombre comando...` | corre un job una vez ahora |
-| `sbx inbox [--all\|--follow]` | jobs que terminaron |
-| `sbx claude` | Claude Code dentro del contenedor (para hacer `/login`) |
-| `sbx ps` | todos los sandbox de la máquina |
-| `sbx levantar` | arranca todos los sandbox caídos de la máquina |
-| `sbx vigia up` / `down` / `logs` | contenedor que los relevanta solo cuando arranca Docker |
+| `sbx init [alpine\|ubuntu]` | creates `.sandbox/` |
+| `sbx up` / `down` / `sh` / `logs` | manages the container |
+| `sbx cron add "*/15 * * * *" name python3 scripts/x.py` | adds a cron job and reloads it |
+| `sbx cron ls` / `rm name` | lists or removes jobs (and reloads) |
+| `sbx cron reload` | re-reads the crontab after editing it by hand: the container doesn't notice on its own |
+| `sbx run name command...` | runs a job once, now |
+| `sbx inbox [--all\|--follow]` | jobs that finished |
+| `sbx claude` | Claude Code inside the container (to run `/login`) |
+| `sbx ps` | every sandbox on the machine |
+| `sbx levantar` | starts every stopped sandbox on the machine |
+| `sbx vigia up` / `down` / `logs` | a container that restarts them when Docker starts |
 
-Los secretos de cada proyecto van en `~/.config/sbx/<carpeta-del-proyecto>.env` (permisos 600). Los `.env` del repo no se ven adentro del contenedor: `sbx` los tapa con `/dev/null`.
+Cron times use the host's time zone. `sbx base build` passes it to the image; a hand-built image defaults to UTC.
 
-## Sandbox caídos tras un reinicio
+Inside the container the code is read-only at `/workspace`. Everything a job writes goes to `/out` (`.sandbox/out/` on the host).
 
-Los sandbox llevan `restart: unless-stopped`, pero Docker Desktop no siempre los relevanta a todos cuando arranca: alguno puede quedar en `Exited`, y cuál varía de un arranque a otro. Mientras está caído, sus cron no corren.
+## Sandboxes that are down after a restart
 
-- `sbx levantar` arranca todos los contenedores `sbx-*` caídos, tal como estaban (no reconstruye la imagen ni recalcula las máscaras de los `.env`). Saltea los que ya no tienen la carpeta del proyecto, para que Docker no cree carpetas vacías al montarla.
-- `sbx vigia up` deja corriendo un contenedor (`sandbox/vigia/`) que arranca con Docker y, a los 30 segundos, levanta los sandbox que ese arranque dejó caídos; reintenta una vez por minuto, hasta 10 veces. No toca un sandbox frenado a mano más tarde ni uno caído de antes: para esos está `sbx levantar`. Se instala una sola vez para toda la máquina.
+Sandboxes use `restart: unless-stopped`, but Docker Desktop doesn't always bring all of them back when it starts: one may end up `Exited`, and which one changes from boot to boot. While it's down, its cron jobs don't run.
 
-El vigía monta el socket de Docker, así que puede manejar todo Docker. Por eso corre sin red, con el sistema de archivos en solo lectura, sin capacidades y con el script dentro de la imagen. Solo sirve si Docker arranca: conviene activar en Docker Desktop el inicio al abrir sesión.
+- `sbx levantar` starts every stopped `sbx-*` container as it was (it doesn't rebuild the image or recompute the `.env` masks). It skips those whose project folder no longer exists, so Docker doesn't create empty folders when mounting.
+- `sbx vigia up` leaves a container running (`sandbox/vigia/`) that starts with Docker and, 30 seconds later, restarts the sandboxes that boot left down; it retries once a minute, up to 10 times. It doesn't touch a sandbox you stopped by hand later, or one that was already down before: `sbx levantar` is for those. You install it once for the whole machine.
 
-## Cómo se entera Claude Code
+The watchdog mounts the Docker socket, so it can control all of Docker. That's why it runs with no network, a read-only filesystem, no capabilities and its script baked into the image. It only helps if Docker itself starts: turn on "Start Docker Desktop when you sign in" in Docker Desktop.
 
-`sbx-run` envuelve cada job: guarda el log en `out/runs/` y agrega una línea a `out/events.jsonl`. El hook `sandbox-inbox.sh` (SessionStart y UserPromptSubmit) le pasa a Claude los eventos que todavía no vio. Para esperar un job en vivo: Monitor con `sbx inbox --follow`.
+## How Claude Code finds out
 
-## Bloqueo de cron en el host
+`sbx-run` wraps every job: it saves the log in `out/runs/` and appends a line to `out/events.jsonl`. The `sandbox-inbox.sh` hook (SessionStart and UserPromptSubmit) passes Claude the events it hasn't seen yet. To wait for a job live: Monitor with `sbx inbox --follow`.
 
-`bloquear-cron-host.py` (PreToolUse) frena `crontab`, `at`, `launchctl load/bootstrap`, `brew services start` y escrituras en `~/Library/LaunchAgents`, y le indica a Claude que use `sbx`. Ignora el cuerpo de los heredocs, que es texto y no comandos.
+## Blocking cron on the host
 
-## Regla sugerida para tu CLAUDE.md
+`bloquear-cron-host.py` (PreToolUse) blocks `crontab`, `at`, `launchctl load/bootstrap`, `brew services start` and writes to `~/Library/LaunchAgents`, and tells Claude to use `sbx`. It ignores the body of heredocs, which is text and not commands.
 
-El hook hace cumplir la regla; esto le explica a Claude cómo trabajar con ella desde el principio.
+## Suggested rule for your CLAUDE.md
+
+The hook enforces the rule; this explains to Claude how to work with it from the start.
 
 ```markdown
-## Los cron corren en el sandbox del proyecto
+## Cron jobs run in the project's sandbox
 
-- Todo cron o proceso que se repite corre dentro del contenedor del proyecto, nunca en el host. Nada de `crontab`, `launchctl`, `brew services` ni `at`.
-- El sandbox es la carpeta `.sandbox/` del proyecto. Se maneja con `sbx`: `sbx init` (o `sbx init ubuntu`) → `sbx up`, después `sbx cron add "<expr>" <nombre> <comando...>`. `sbx run <nombre> <comando...>` lo prueba una vez.
-- Dentro del contenedor el código está en `/workspace` en solo lectura. Todo lo que un job genere va a `/out` (`.sandbox/out/` en el host).
-- Cada job que termina deja un evento en `.sandbox/out/events.jsonl`; un hook te pasa los nuevos. Para esperar uno, usá Monitor con `sbx inbox --follow`.
+- Every cron job or repeating process runs inside the project's container, never on the host. No `crontab`, `launchctl`, `brew services` or `at`.
+- The sandbox is the project's `.sandbox/` folder, managed with `sbx`: `sbx init` (or `sbx init ubuntu`) → `sbx up`, then `sbx cron add "<expr>" <name> <command...>`. `sbx run <name> <command...>` tries it once.
+- Inside the container the code is at `/workspace`, read-only. Anything a job generates goes to `/out` (`.sandbox/out/` on the host).
+- Each finished job leaves an event in `.sandbox/out/events.jsonl`; a hook passes you the new ones. To wait for one, use Monitor with `sbx inbox --follow`.
 ```
+
+## License
+
+[MIT](LICENSE)
