@@ -93,8 +93,10 @@ mascaras() {
 }
 
 # Sin máscaras: para bajar, ver logs o mandar señales, que no crean contenedores nuevos.
+host_tz() { readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||'; }
+
 compose_base() {
-  SBX_ENV_FILE="$HOME/.config/sbx/${NAME#sbx-}.env" \
+  SBX_ENV_FILE="$HOME/.config/sbx/${NAME#sbx-}.env" SBX_TZ="$(host_tz)" \
     docker compose -p "$NAME" -f "$SBX/compose.yaml" "$@"
 }
 
@@ -113,8 +115,8 @@ base_build() {
     ubuntu) from=ubuntu:24.04 ;;
     *) die "sistema operativo no soportado: $os" ;;
   esac
-  local tz; tz="$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')"
-  docker build -t "sbx-base:$os" --build-arg BASE="$from" --build-arg TZ="${tz:-UTC}" "$BASE_DIR"
+  local tz; tz="$(host_tz)"
+  docker build --target claude -t "sbx-base:$os" --build-arg BASE="$from" --build-arg TZ="${tz:-UTC}" "$BASE_DIR"
 }
 
 ensure_base() {

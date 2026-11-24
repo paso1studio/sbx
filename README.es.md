@@ -52,6 +52,29 @@ proyecto/
 
 Los secretos de cada proyecto van en `~/.config/sbx/<carpeta-del-proyecto>.env` (permisos 600). Los `.env` del repo no se ven adentro del contenedor: `sbx` los tapa con `/dev/null`.
 
+## Imagen base
+
+`sbx base build` construye la imagen base en tu máquina, en dos etapas (`sandbox/base/Dockerfile`):
+
+- **`base`**: Alpine o Ubuntu, [supercronic](https://github.com/aptible/supercronic), `uv` (con versión fija), `sbx-run` y el entrypoint. Sin Claude Code.
+- **`claude`**: `base` más Claude Code, descargado del instalador de Anthropic en tu máquina. Es lo que `sbx base build` etiqueta como `sbx-base:alpine` / `sbx-base:ubuntu`, y lo que necesita `sbx claude`.
+
+La etapa `base` también se publica, para `linux/amd64` y `linux/arm64`, como `ghcr.io/paso1studio/sbx-base:alpine` y `:ubuntu` (más una etiqueta `-vX.Y.Z` por versión). No trae Claude Code: el software de Anthropic no se redistribuye. Para saltear el build local, apuntá el proyecto a esa imagen:
+
+```dockerfile
+# .sandbox/Dockerfile
+FROM ghcr.io/paso1studio/sbx-base:alpine
+```
+
+Si además querés Claude Code en esa imagen, instalalo en el Dockerfile de tu proyecto, como un paso con `USER sbx`:
+
+```dockerfile
+ENV CLAUDE_CONFIG_DIR=/home/sbx/.claude DISABLE_AUTOUPDATER=1 USE_BUILTIN_RIPGREP=0
+RUN curl -fsSL https://claude.ai/install.sh | bash
+```
+
+La imagen publicada está en UTC. El `compose.yaml` del proyecto fija `TZ` con la zona horaria de tu máquina (`SBX_TZ`, que pasa `sbx`), así que los cron siguen tu reloj.
+
 ## Sandbox caídos tras un reinicio
 
 Los sandbox llevan `restart: unless-stopped`, pero Docker Desktop no siempre los relevanta a todos cuando arranca: alguno puede quedar en `Exited`, y cuál varía de un arranque a otro. Mientras está caído, sus cron no corren.

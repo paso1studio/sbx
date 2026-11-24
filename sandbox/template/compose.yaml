@@ -8,6 +8,10 @@ services:
     env_file:
       - path: ${SBX_ENV_FILE:-/dev/null}
         required: false
+    # Zona horaria de los cron: la de tu máquina (sbx la pasa en SBX_TZ). Sirve igual con la
+    # imagen base del registry, que viene en UTC.
+    environment:
+      TZ: ${SBX_TZ:-UTC}
     volumes:
       - ..:/workspace:ro     # código: lectura y ejecución, sin escritura
       - ./out:/out           # salida: logs y eventos para el host

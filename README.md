@@ -70,9 +70,32 @@ sbx inbox                                 # jobs that finished
 | `sbx levantar` | starts every stopped sandbox on the machine |
 | `sbx vigia up` / `down` / `logs` | a container that restarts them when Docker starts |
 
-Cron times use the host's time zone. `sbx base build` passes it to the image; a hand-built image defaults to UTC.
+Cron times use the host's time zone: `sbx` passes it to the container as `TZ`.
 
 Inside the container the code is read-only at `/workspace`. Everything a job writes goes to `/out` (`.sandbox/out/` on the host).
+
+## Base image
+
+`sbx base build` builds the base image on your machine, in two stages (`sandbox/base/Dockerfile`):
+
+- **`base`**: Alpine or Ubuntu, [supercronic](https://github.com/aptible/supercronic), `uv` (pinned), `sbx-run` and the entrypoint. No Claude Code.
+- **`claude`**: `base` plus Claude Code, downloaded from Anthropic's installer on your machine. This is what `sbx base build` tags as `sbx-base:alpine` / `sbx-base:ubuntu`, and what `sbx claude` needs.
+
+The `base` stage is also published, for `linux/amd64` and `linux/arm64`, as `ghcr.io/paso1studio/sbx-base:alpine` and `:ubuntu` (plus a `-vX.Y.Z` tag per release). It doesn't include Claude Code: Anthropic's software isn't redistributed. To skip the local build, point your project at it:
+
+```dockerfile
+# .sandbox/Dockerfile
+FROM ghcr.io/paso1studio/sbx-base:alpine
+```
+
+If you also want Claude Code in that image, install it in your project's Dockerfile, as a `USER sbx` step:
+
+```dockerfile
+ENV CLAUDE_CONFIG_DIR=/home/sbx/.claude DISABLE_AUTOUPDATER=1 USE_BUILTIN_RIPGREP=0
+RUN curl -fsSL https://claude.ai/install.sh | bash
+```
+
+The published image is in UTC. The project's `compose.yaml` sets `TZ` from your machine's time zone (`SBX_TZ`, which `sbx` passes), so your cron times still follow your clock.
 
 ## Sandboxes that are down after a restart
 
