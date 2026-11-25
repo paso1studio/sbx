@@ -59,12 +59,30 @@ Los secretos de cada proyecto van en `~/.config/sbx/<carpeta-del-proyecto>.env` 
 - **`base`**: Alpine o Ubuntu, [supercronic](https://github.com/aptible/supercronic), `uv` (con versión fija), `sbx-run` y el entrypoint. Sin Claude Code.
 - **`claude`**: `base` más Claude Code, descargado del instalador de Anthropic en tu máquina. Es lo que `sbx base build` etiqueta como `sbx-base:alpine` / `sbx-base:ubuntu`, y lo que necesita `sbx claude`.
 
-La etapa `base` también se publica, para `linux/amd64` y `linux/arm64`, como `ghcr.io/paso1studio/sbx-base:alpine` y `:ubuntu` (más una etiqueta `-vX.Y.Z` por versión). No trae Claude Code: el software de Anthropic no se redistribuye. Para saltear el build local, apuntá el proyecto a esa imagen:
+### Imagen ya construida (GitHub Container Registry)
+
+La etapa `base` también se publica, pública, en [`ghcr.io/paso1studio/sbx-base`](https://github.com/orgs/paso1studio/packages/container/package/sbx-base). No trae Claude Code: el software de Anthropic no se redistribuye.
+
+| Etiqueta | Qué es |
+|---|---|
+| `alpine` | la última versión, Alpine 3.22 |
+| `ubuntu` | la última versión, Ubuntu 24.04 (si necesitás glibc) |
+| `alpine-v0.1.0`, `ubuntu-v0.1.0` | una versión puntual, que no cambia |
+
+No hay etiqueta `latest`. Las dos imágenes son multi-arquitectura (`linux/amd64`, `linux/arm64`), corren con el usuario sin privilegios `sbx` e incluyen supercronic, `uv` 0.13.9, `sbx-run` y el entrypoint. La zona horaria es UTC salvo que el contenedor defina `TZ`.
+
+```bash
+docker pull ghcr.io/paso1studio/sbx-base:alpine
+```
+
+Para saltear el build local, apuntá el proyecto a esa imagen:
 
 ```dockerfile
 # .sandbox/Dockerfile
 FROM ghcr.io/paso1studio/sbx-base:alpine
 ```
+
+Para builds reproducibles, usá una etiqueta de versión (`alpine-v0.1.0`) o fijá el digest (`ghcr.io/paso1studio/sbx-base:alpine@sha256:...`). Las versiones las arma [un workflow](.github/workflows/publish-base.yml) cuando se sube un tag `v*`.
 
 Si además querés Claude Code en esa imagen, instalalo en el Dockerfile de tu proyecto, como un paso con `USER sbx`:
 
