@@ -81,12 +81,30 @@ Inside the container the code is read-only at `/workspace`. Everything a job wri
 - **`base`**: Alpine or Ubuntu, [supercronic](https://github.com/aptible/supercronic), `uv` (pinned), `sbx-run` and the entrypoint. No Claude Code.
 - **`claude`**: `base` plus Claude Code, downloaded from Anthropic's installer on your machine. This is what `sbx base build` tags as `sbx-base:alpine` / `sbx-base:ubuntu`, and what `sbx claude` needs.
 
-The `base` stage is also published, for `linux/amd64` and `linux/arm64`, as `ghcr.io/paso1studio/sbx-base:alpine` and `:ubuntu` (plus a `-vX.Y.Z` tag per release). It doesn't include Claude Code: Anthropic's software isn't redistributed. To skip the local build, point your project at it:
+### Prebuilt image (GitHub Container Registry)
+
+The `base` stage is also published, public, at [`ghcr.io/paso1studio/sbx-base`](https://github.com/orgs/paso1studio/packages/container/package/sbx-base). It doesn't include Claude Code: Anthropic's software isn't redistributed.
+
+| Tag | What it is |
+|---|---|
+| `alpine` | latest release, Alpine 3.22 |
+| `ubuntu` | latest release, Ubuntu 24.04 (needed for glibc) |
+| `alpine-v0.1.0`, `ubuntu-v0.1.0` | a specific release, which never changes |
+
+There is no `latest` tag. Both images are multi-arch (`linux/amd64`, `linux/arm64`), run as the non-root user `sbx` and include supercronic, `uv` 0.13.9, `sbx-run` and the entrypoint. The time zone is UTC unless the container sets `TZ`.
+
+```bash
+docker pull ghcr.io/paso1studio/sbx-base:alpine
+```
+
+To skip the local build, point your project at it:
 
 ```dockerfile
 # .sandbox/Dockerfile
 FROM ghcr.io/paso1studio/sbx-base:alpine
 ```
+
+For reproducible builds, use a release tag (`alpine-v0.1.0`) or pin the digest (`ghcr.io/paso1studio/sbx-base:alpine@sha256:...`). Releases are built by [a workflow](.github/workflows/publish-base.yml) that runs when a `v*` tag is pushed.
 
 If you also want Claude Code in that image, install it in your project's Dockerfile, as a `USER sbx` step:
 
